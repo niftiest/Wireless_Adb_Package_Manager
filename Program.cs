@@ -1,12 +1,14 @@
 using System.Diagnostics;
-using System.Text.RegularExpressions;
+using System.Net;
 
 namespace WirelessAdbPackageManager
 {
     public static class Program
     {
-        public static List<string> enabledPackages = new();
-        public static List<string> disabledPackages = new();
+        public static List<string> EnabledPackages { get; set; } = new();
+        public static List<string> DisabledPackages { get; set; } = new();
+
+        private static string AdbPath => Path.Combine(Path.GetTempPath(), "adb.exe");
 
         [STAThread]
         static void Main()
@@ -22,8 +24,10 @@ namespace WirelessAdbPackageManager
             if (Connectivity.IsPaired && Connectivity.IsConnected)
             {
                 string deviceType = await GetDeviceType();
-                string msg = string.IsNullOrEmpty(deviceType) ? $"Successfully connected to your device" : $"Successfully connected to your {deviceType}";
-                UpdateLog(msg);
+                string message = string.IsNullOrEmpty(deviceType)
+                    ? "Successfully connected to your device"
+                    : $"Successfully connected to your {deviceType}";
+                UpdateLog(message);
                 UpdateUIForConnectedState();
                 await RetrievePackageLists();
                 return;
@@ -57,23 +61,18 @@ namespace WirelessAdbPackageManager
 
         private static async Task<string> GetDeviceType()
         {
-            string result = await RunCommandAsync($@"{Path.GetTempPath()}adb.exe devices -l");
-            var split = result.Split("\r\n").ToList();
-            var deviceLine = split.FirstOrDefault(item => item.Contains(UI.Form.IpAddressTextBox.Text));
-            if (deviceLine != null)
-            {
-                split = deviceLine.Split(" ").ToList();
-                var deviceName = split.FirstOrDefault(item => item.Contains("model:"));
-                if (deviceName != null)
-                    return deviceName.Replace("model:", "");
-            }
-            return null;
+            string result = await RunCommandAsync($"{AdbPath} devices -l");
+            var deviceLine = result.Split("\r\n").FirstOrDefault(line => line.Contains(UI.Form.IpAddressTextBox.Text));
+            if (deviceLine == null) return null;
+
+            var modelToken = deviceLine.Split(" ").FirstOrDefault(token => token.Contains("model:"));
+            return modelToken?.Replace("model:", "");
         }
 
         private static async Task<bool> CheckIfAlreadyPaired(string ip)
         {
             UpdateLog("Checking for existing pair with device");
-            string result = await RunCommandAsync($@"{Path.GetTempPath()}adb.exe devices");
+            string result = await RunCommandAsync($"{AdbPath} devices");
 
             if (!result.Contains("List of devices attached")) return false;
 
@@ -99,24 +98,24 @@ namespace WirelessAdbPackageManager
         private static async Task<bool> PairWithDevice(string ip, string port, string pairingCode)
         {
             UpdateLog($"Attempting to pair with {ip}");
-            await RunCommandAsync($@"{Path.GetTempPath()}adb.exe disconnect");
-            await RunCommandAsync($@"{Path.GetTempPath()}adb.exe kill-server");
-            string result = await RunCommandAsync($@"{Path.GetTempPath()}adb.exe pair {ip}:{port} {pairingCode}");
+            await RunCommandAsync($"{AdbPath} disconnect");
+            await RunCommandAsync($"{AdbPath} kill-server");
+            string result = await RunCommandAsync($"{AdbPath} pair {ip}:{port} {pairingCode}");
             return result.Contains($"Successfully paired to {ip}:{port}");
         }
 
         private static async Task<bool> ConnectToDevice(string ip, string port)
         {
             UpdateLog($"Attempting to connect to {ip}");
-            string result = await RunCommandAsync($@"{Path.GetTempPath()}adb.exe connect {ip}:{port}");
+            string result = await RunCommandAsync($"{AdbPath} connect {ip}:{port}");
             UpdateLog($"ADB: {result}");
             return result.Contains($"connected to {ip}:{port}");
         }
 
         public static async Task DisconnectDevice()
         {
-            await RunCommandAsync($@"{Path.GetTempPath()}adb.exe disconnect");
-            await RunCommandAsync($@"{Path.GetTempPath()}adb.exe kill-server");
+            await RunCommandAsync($"{AdbPath} disconnect");
+            await RunCommandAsync($"{AdbPath} kill-server");
             UpdateLog("Disconnected from device");
             ClearPackageLists();
             UI.Form.ConnectButton.Text = "CONNECT";
@@ -125,32 +124,30 @@ namespace WirelessAdbPackageManager
 
         public static async Task InstallPackage()
         {
-            OpenFileDialog openFileDialog = new OpenFileDialog
+            using OpenFileDialog openFileDialog = new()
             {
                 Filter = "APK Files (*.apk)|*.apk",
                 Title = "Select an APK File"
             };
 
-            if (openFileDialog.ShowDialog() == DialogResult.OK)
-            {
-                string selectedFilePath = openFileDialog.FileName;
-                await PerformPackageOperation(null, $"install {selectedFilePath}", "Success", $"Installed {openFileDialog.FileName}", $"Unable to install {openFileDialog.FileName}");
-            }
-            return;
+            if (openFileDialog.ShowDialog() != DialogResult.OK) return;
+
+            string selectedFilePath = openFileDialog.FileName;
+            await PerformPackageOperation(null, $"install {selectedFilePath}", "Success", $"Installed {selectedFilePath}", $"Unable to install {selectedFilePath}");
         }
 
         public static async Task PerformPackageOperation(CheckedListBox.CheckedItemCollection items, string command, string expectedResult, string successMessage, string errorMessage)
         {
             if (items == null)
             {
-                string result = await RunCommandAsync($@"{Path.GetTempPath()}adb.exe {command}");
+                string result = await RunCommandAsync($"{AdbPath} {command}");
                 if (result.Contains(expectedResult))
                 {
-                    UpdateLog($"{successMessage}");
+                    UpdateLog(successMessage);
                 }
                 else
                 {
-                    MessageBox.Show($"{errorMessage}", "Operation Failed", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                    MessageBox.Show(errorMessage, "Operation Failed", MessageBoxButtons.OK, MessageBoxIcon.Error);
                 }
             }
             else
@@ -158,7 +155,7 @@ namespace WirelessAdbPackageManager
                 foreach (object item in items)
                 {
                     string packageName = GetPackageName(item);
-                    string result = await RunCommandAsync($@"{Path.GetTempPath()}adb.exe shell pm {command} com.{packageName}");
+                    string result = await RunCommandAsync($"{AdbPath} shell pm {command} com.{packageName}");
                     if (result.Contains(expectedResult))
                     {
                         UpdateLog($"{successMessage} {packageName}");
@@ -176,19 +173,19 @@ namespace WirelessAdbPackageManager
         {
             ClearPackageLists();
 
-            string disabledPackagesResult = await RunCommandAsync($@"{Path.GetTempPath()}adb.exe shell pm list packages -d");
+            string disabledPackagesResult = await RunCommandAsync($"{AdbPath} shell pm list packages -d");
             if (disabledPackagesResult.Contains("package:com."))
             {
-                disabledPackages = ExtractPackages(disabledPackagesResult);
-                UI.Form.DisabledPackagesCheckBoxList.Items.AddRange(disabledPackages.ToArray());
+                DisabledPackages = ExtractPackages(disabledPackagesResult);
+                UI.Form.DisabledPackagesCheckBoxList.Items.AddRange(DisabledPackages.ToArray());
             }
 
-            string enabledPackagesResult = await RunCommandAsync($@"{Path.GetTempPath()}adb.exe shell pm list packages");
+            string enabledPackagesResult = await RunCommandAsync($"{AdbPath} shell pm list packages");
             if (enabledPackagesResult.Contains("package:com."))
             {
                 UpdateLog("Updating current package lists");
-                enabledPackages = ExtractPackages(enabledPackagesResult).Except(disabledPackages).ToList();
-                UI.Form.EnabledPackagesCheckBoxList.Items.AddRange(enabledPackages.ToArray());
+                EnabledPackages = ExtractPackages(enabledPackagesResult).Except(DisabledPackages).ToList();
+                UI.Form.EnabledPackagesCheckBoxList.Items.AddRange(EnabledPackages.ToArray());
             }
             else
             {
@@ -221,32 +218,27 @@ namespace WirelessAdbPackageManager
             UI.Form.ConnectButton.Text = "CONNECT";
         }
 
-        public static async Task<bool> ValidateForm()
+        public static Task<bool> ValidateForm()
         {
-            bool result;
-
-            result = await IsValidIPAddress(UI.Form.IpAddressTextBox.Text);
-            if (!result)
+            if (!IsValidIpAddress(UI.Form.IpAddressTextBox.Text))
             {
                 ShowError("Invalid IP Address");
-                return false;
+                return Task.FromResult(false);
             }
 
-            result = await IsNumericAndLength(UI.Form.PortTextBox.Text, 5);
-            if (!result)
+            if (!IsNumericWithLength(UI.Form.PortTextBox.Text, 5))
             {
                 ShowError("Invalid Port");
-                return false;
+                return Task.FromResult(false);
             }
 
-            result = await IsNumericAndLength(UI.Form.PairingCodeTextBox.Text, 6);
-            if (!result)
+            if (!IsNumericWithLength(UI.Form.PairingCodeTextBox.Text, 6))
             {
                 ShowError("Invalid Pairing Code");
-                return false;
+                return Task.FromResult(false);
             }
 
-            return true;
+            return Task.FromResult(true);
         }
 
         public static void ShowError(string message)
@@ -271,13 +263,8 @@ namespace WirelessAdbPackageManager
         {
             UI.Form.EnabledPackagesCheckBoxList.Items.Clear();
             UI.Form.DisabledPackagesCheckBoxList.Items.Clear();
-            disabledPackages.Clear();
-            enabledPackages.Clear();
-        }
-
-        private static void ToggleUIElements(bool enable)
-        {
-            UI.Form.IpAddressTextBox.Enabled = UI.Form.PortTextBox.Enabled = UI.Form.PairingCodeTextBox.Enabled = UI.Form.LogsTextBox.Enabled = UI.Form.EnabledPackagesSearchTextBox.Enabled = UI.Form.DisabledPackagesSearchTextBox.Enabled = UI.Form.ConnectButton.Enabled = UI.Form.InstallButton.Enabled = enable;
+            DisabledPackages.Clear();
+            EnabledPackages.Clear();
         }
 
         private static string GetPackageName(object item)
@@ -287,12 +274,12 @@ namespace WirelessAdbPackageManager
 
         public static void FilterEnabledPackages(string searchTerm)
         {
-            FilterPackages(enabledPackages, UI.Form.EnabledPackagesCheckBoxList, searchTerm);
+            FilterPackages(EnabledPackages, UI.Form.EnabledPackagesCheckBoxList, searchTerm);
         }
 
         public static void FilterDisabledPackages(string searchTerm)
         {
-            FilterPackages(disabledPackages, UI.Form.DisabledPackagesCheckBoxList, searchTerm);
+            FilterPackages(DisabledPackages, UI.Form.DisabledPackagesCheckBoxList, searchTerm);
         }
 
         private static void FilterPackages(List<string> packageList, CheckedListBox checkedListBox, string searchTerm)
@@ -302,23 +289,18 @@ namespace WirelessAdbPackageManager
                 ? packageList
                 : packageList.Where(item => item.Contains(searchTerm, StringComparison.OrdinalIgnoreCase)).ToList();
 
-            if (filteredItems.Any())
+            if (filteredItems.Count > 0)
             {
                 checkedListBox.Items.AddRange(filteredItems.ToArray());
             }
         }
 
-        private static async Task<bool> IsValidIPAddress(string input)
+        private static bool IsValidIpAddress(string input)
         {
-            const string pattern = @"^(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\." +
-                                   @"(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\." +
-                                   @"(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\." +
-                                   @"(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$";
-
-            return Regex.IsMatch(input, pattern);
+            return IPAddress.TryParse(input, out _);
         }
 
-        private static async Task<bool> IsNumericAndLength(string input, int length)
+        private static bool IsNumericWithLength(string input, int length)
         {
             return !string.IsNullOrEmpty(input) && input.Length == length && input.All(char.IsDigit);
         }

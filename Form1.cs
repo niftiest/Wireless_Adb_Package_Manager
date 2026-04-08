@@ -1,6 +1,3 @@
-using System.Diagnostics;
-using System.Text.RegularExpressions;
-
 namespace WirelessAdbPackageManager
 {
     public partial class Form1 : Form
@@ -22,14 +19,12 @@ namespace WirelessAdbPackageManager
             if (ConnectButton.Text.Equals("DISCONNECT"))
             {
                 await Program.DisconnectDevice();
+                return;
             }
-            else
+
+            if (await Program.ValidateForm())
             {
-                bool formValidated = await Program.ValidateForm();
-                if (formValidated)
-                {
-                    await Program.HandleConnection();
-                }
+                await Program.HandleConnection();
             }
         }
 
@@ -55,12 +50,12 @@ namespace WirelessAdbPackageManager
 
         private void EnabledPackagesList_SelectedIndexChanged(object sender, EventArgs e)
         {
-            UninstallButton.Enabled = DisableButton.Enabled = (EnabledPackagesCheckBoxList.CheckedItems.Count > 0);
+            UninstallButton.Enabled = DisableButton.Enabled = EnabledPackagesCheckBoxList.CheckedItems.Count > 0;
         }
 
         private void DisabledPackagesList_SelectedIndexChanged(object sender, EventArgs e)
         {
-            EnableButton.Enabled = (DisabledPackagesCheckBoxList.CheckedItems.Count > 0);
+            EnableButton.Enabled = DisabledPackagesCheckBoxList.CheckedItems.Count > 0;
         }
 
         private void EnabledPackageFilter_TextChanged(object sender, EventArgs e)
