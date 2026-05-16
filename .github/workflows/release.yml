@@ -1,0 +1,49 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Publish self-contained single-file exe
+        shell: pwsh
+        run: |
+          dotnet publish src/WirelessAdbPackageManager `
+            -c Release `
+            -r win-x64 `
+            --self-contained `
+            -p:PublishSingleFile=true `
+            -p:IncludeNativeLibrariesForSelfExtract=true `
+            -o publish
+
+      - name: Compute SHA256
+        shell: pwsh
+        run: |
+          $exe = "publish/WirelessAdbPackageManager.exe"
+          $hash = (Get-FileHash $exe -Algorithm SHA256).Hash.ToLower()
+          "$hash  WirelessAdbPackageManager.exe" | Out-File -FilePath publish/SHA256SUMS.txt -Encoding ascii
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: pwsh
+        run: |
+          $tag = "${{ github.ref_name }}"
+          gh release create $tag `
+            publish/WirelessAdbPackageManager.exe `
+            publish/SHA256SUMS.txt `
+            --title "$tag" `
+            --notes "Self-contained single-file build for win-x64. SHA-256 in SHA256SUMS.txt."
